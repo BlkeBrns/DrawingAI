@@ -8,49 +8,41 @@ import PIL.Image
 import matplotlib.pyplot as plt
 import imageio
 import imghdr
+import png
 
 def make_generator_model():
     model = tf.keras.models.Sequential()
-    model.add(tf.keras.layers.Dense(16*16*128,input_shape=(100,),use_bias=False))
+    model.add(tf.keras.layers.Dense(512 * 512,input_shape=(100,),use_bias=False))
     model.add(tf.keras.layers.BatchNormalization())
     model.add(tf.keras.layers.LeakyReLU())
 
-    model.add(tf.keras.layers.Reshape((16,16,128)))
-    assert model.output_shape == (None, 16, 16, 128)
-
-    model.add(tf.keras.layers.Conv2DTranspose(64,(5,5),strides=(2,2),padding='same',use_bias=False))
-    assert model.output_shape == (None, 32, 32, 64)
-    model.add(tf.keras.layers.BatchNormalization())
-    model.add(tf.keras.layers.LeakyReLU())
-
-    model.add(tf.keras.layers.Conv2DTranspose(64,(5,5),strides=(2,2),padding='same',use_bias=False))
+    model.add(tf.keras.layers.Reshape((64, 64, 64)))
     assert model.output_shape == (None, 64, 64, 64)
+
+    model.add(tf.keras.layers.Conv2DTranspose(128,(5,5),strides=(2,2),padding='same',use_bias=False))
+    assert model.output_shape == (None, 128, 128, 128)
     model.add(tf.keras.layers.BatchNormalization())
     model.add(tf.keras.layers.LeakyReLU())
-    
-    model.add(tf.keras.layers.Conv2DTranspose(64,(5,5),strides=(2,2),padding='same',use_bias=False))     # stride (2,2) doubles the size of the input
-    assert model.output_shape == (None, 128, 128, 64)
+
+    model.add(tf.keras.layers.Conv2DTranspose(128,(5,5),strides=(2,2),padding='same',use_bias=False))
+    assert model.output_shape == (None, 256, 256, 128)
     model.add(tf.keras.layers.BatchNormalization())
     model.add(tf.keras.layers.LeakyReLU())
 
     model.add(tf.keras.layers.Conv2DTranspose(3,(5,5),strides=(2,2),padding='same',activation='tanh',use_bias=False))
-    assert model.output_shape == (None, 256, 256, 3)
+    assert model.output_shape == (None, 512, 512, 3)
 
     return model
 
 def make_discriminator_model():
   model = tf.keras.models.Sequential()
-  model.add(tf.keras.layers.Conv2D(256,(5,5),strides=(2,2),padding='same',input_shape=[256,256,3]))
-  model.add(tf.keras.layers.LeakyReLU())
-  model.add(tf.keras.layers.Dropout(0.3))
-
-  model.add(tf.keras.layers.Conv2D(128,(5,5),strides=(2,2),padding='same'))
-  model.add(tf.keras.layers.LeakyReLU())
-  model.add(tf.keras.layers.Dropout(0.3))
 
   model.add(tf.keras.layers.Conv2D(64,(5,5),strides=(2,2),padding='same'))
   model.add(tf.keras.layers.LeakyReLU())
-  model.add(tf.keras.layers.Dropout(0.3))
+
+  model.add(tf.keras.layers.Conv2D(128,(5,5),strides=(2,2),padding='same'))
+  model.add(tf.keras.layers.LeakyReLU())
+  model.add(tf.keras.layers.Dropout(0.2))
 
   model.add(tf.keras.layers.Flatten())
   model.add(tf.keras.layers.Dense(1))
@@ -68,12 +60,15 @@ def generator_loss(fake_output):
   return cross_entropy(tf.ones_like(fake_output),fake_output)
 
 images = []
-for i in os.scandir('IMAGES/'):
+Count = 0
+for i in os.scandir('AIPICS/'):
+    Count += 1
     img_type = imghdr.what(i.path)
     if img_type is None:
         print(f"{i.path} is not an image")
     else:
         images.append(i.path)
+print(Count)
 images = tf.data.Dataset.from_tensor_slices(images)
 
 def get_ds(path):
@@ -81,7 +76,7 @@ def get_ds(path):
   img = tf.image.decode_jpeg(img,channels=3)
   img = tf.image.convert_image_dtype(img,tf.float32)
   img = tf.divide(tf.subtract(tf.multiply(img,255),127.5),127.5)
-  return tf.image.resize(img,(256,256))
+  return tf.image.resize(img,(512,512))
 
 BATCH_SIZE = 1
 train_images = images.map(get_ds,num_parallel_calls=tf.data.experimental.AUTOTUNE).shuffle(BATCH_SIZE).batch(BATCH_SIZE)
@@ -89,7 +84,6 @@ train_images = images.map(get_ds,num_parallel_calls=tf.data.experimental.AUTOTUN
 generator = make_generator_model()
 noise = tf.random.normal([1,100])
 generated_image = generator(noise,training=False)
-#plt.imshow(generated_image[0]*127.5+127.5)
 
 discriminator = make_discriminator_model()
 decision = discriminator(generated_image)
@@ -98,7 +92,7 @@ print(decision)
 generator_optimizer = tf.keras.optimizers.legacy.Adam(1e-4)
 discriminator_optimizer = tf.keras.optimizers.legacy.Adam(1e-4)
 
-EPOCHS = 300
+EPOCHS = 1000
 noise_dims = 100
 num_egs_to_generate = 16
 seed = tf.random.normal([num_egs_to_generate,noise_dims])
@@ -124,15 +118,10 @@ def train_step(images):
 def generate_and_save_output(model,epoch,test_input):
 
   predictions = model(test_input,training=False)
-  # predictions = predictions.numpy().reshape(16,256,256,1)
-  fig = plt.figure(figsize=(4,4))
-  # print(predictions)
-  for i in range(predictions.shape[0]):
-    plt.subplot(4,4,i+1)
-    plt.imshow((predictions[i]*127.5+127.5).numpy().astype(np.uint8),cmap='gray')
-    plt.axis('off')
-  plt.savefig(f'image_{epoch}.png')
-  plt.close()
+  print((np.asarray(predictions[0]) * 255).astype(np.uint8))
+  print(f"image_{epoch}.png")
+  im = PIL.Image.fromarray((np.asarray(predictions[0]) * 255).astype(np.uint8))
+  im.save(f"image_{epoch}.png")
 
 def train(dataset,epochs):
   for epoch in range(epochs):
